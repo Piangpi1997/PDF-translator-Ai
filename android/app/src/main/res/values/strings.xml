@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Myanmar Ebook Reader</string>
+    <string name="title_activity_main">Myanmar Ebook Reader</string>
+    <string name="package_name">com.piangpi.myanmarebookreader</string>
+    <string name="custom_url_scheme">com.piangpi.myanmarebookreader</string>
+</resources>

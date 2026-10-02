@@ -1,0 +1,42 @@
+{
+  "name": "myanmar-ebook-translator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,green \"node --watch server/main.js\" \"vite --host 0.0.0.0\"",
+    "build": "npm run check && vite build",
+    "check": "node --check server/main.js && node --check server/db.js && node --check server/security.js && node --check server/importers.js && node --check server/providers.js && node --check server/jobs.js && node --check server/routes.js",
+    "test": "node --test",
+    "start": "NODE_ENV=production node server/main.js",
+    "android:init": "cap add android",
+    "android:sync": "npm run build && cap sync android",
+    "android:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "cap": "cap"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3",
+    "better-sqlite3": "^12.4.1",
+    "cheerio": "^1.1.2",
+    "dotenv": "^18.0.5",
+    "express": "^5.1.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.10.0",
+    "multer": "^2.0.2",
+    "pdfjs-dist": "^5.4.149",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.4",
+    "vite": "^7.1.9"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "pdfkit": "^0.17.2",
+    "supertest": "^7.1.4",
+    "typescript": "^5.9.3"
+  }
+}
