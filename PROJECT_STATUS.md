@@ -1,23 +1,26 @@
 # Project validation status
 
-Validated locally on 2026-10-02. This is a working implementation in the existing repository; it is **not a fully complete translation platform** because OCR and live translation/TTS services are not configured here.
+Validated locally on 2026-10-02 against base commit `75a64770c6c40ca414ca95e3d33fcae12252a16c`. This remains a working implementation, not a fully complete translation platform: OCR and live translation/TTS services are not configured here. The current UI and settings changes are local and unpublished; no commit or push has been made.
 
 ## PASS
 
-The Node integration suite reports **10 passed, 0 failed**. It exercises PDF/DOCX/EPUB/TXT extraction and structure, mixed-image and blank PDF pages, session and owner isolation, bookmarks/notes/highlights/glossary, search/statistics, online-PDF security and deduplication, private notifications, audio approval/preservation, OCR blocking, translation retry, and a 650-page structural/resume case.
-
-`npm run build` passes backend syntax checks and the optimized Vite production build. PDF.js and its worker are loaded on demand: the initial bundle is 352.88 KB (107.62 KB gzip), and the PDF.js chunk is 415.93 KB (123.51 KB gzip). A production-app smoke check returned HTTP 200 for `/` and `/api/health`; the sign-in page rendered with no browser console errors.
-
-Android Gradle verification passes for `testDebugUnitTest`, `assembleDebug`, and `assembleDebugAndroidTest`. The JVM test result is **1 test, 0 failures**; the instrumentation-test APK compiles and packages. The application APK is `android/app/build/outputs/apk/debug/app-debug.apk` (4,784,336 bytes), package `com.piangpi.myanmarebookreader`, min SDK 23, target SDK 35. ZIP integrity and v1/v2 debug signatures verify. SHA-256: `8b16606249b47383253d5b35c9a932ccfdca9c769c1014c06acbd08f4f7a44af`.
+- `npm test`: **13 passed, 0 failed**. This includes the existing document, ownership, reader, translation, audio, and security integration coverage plus backend-origin validation and health-check request tests.
+- `npm run build`: backend syntax checks and optimized Vite build pass. Latest client output: JavaScript 360.70 KB (109.86 KB gzip), CSS 27.85 KB (6.89 KB gzip), and the lazy PDF.js chunk 415.93 KB (123.51 KB gzip).
+- Production smoke check returns HTTP 200 for `/` and `/api/health`; health reports `{ "ok": true, "service": "myanmar-ebook-reader" }`.
+- Chromium visual review covered the sign-in screen at 1440×1000 and 390×844, plus the signed-in Settings screen at desktop and 390 px mobile width. The server health-check control responded successfully; no horizontal overflow was observed at 390 px.
+- `npm run android:debug` passes, including the production web build, Capacitor sync, and `assembleDebug`. `testDebugUnitTest` and `assembleDebugAndroidTest` also pass.
+- APK: `android/app/build/outputs/apk/debug/app-debug.apk`, **4,913,848 bytes**, package `com.piangpi.myanmarebookreader`, min SDK 23, target SDK 35. ZIP integrity passes; Android Build Tools 35.0.0 `apksigner` verifies v1 and v2 signatures. SHA-256: `05b6a501f4d46c5123e14e78a1df7fa02e4c06da33506dfa5e84645095d56443`.
 
 ## PARTIAL / not live-tested
 
 Translation adapters and resumable job behavior are implemented and tested with deterministic responses, but **no InvokeLLM endpoint or Kimi API key is configured**, so no live translation request or translation-quality claim was made. Audio requires a compatible server-side `TTS_API_URL`, which is also not configured. Approval gating, playback routes, and preservation of prior audio after a failed regeneration are tested; live speech and Myanmar voice quality were not tested.
 
-No `adb` device or emulator is available, so APK installation and on-device runtime behavior were not tested. The APK contains the client only and requires a reachable API/database backend. The browser check covered the sign-in shell, not authenticated reader screens; the browser correctly blocked agent-entered password text, while authenticated API/data flows were exercised by integration tests. TXT export works; PDF/EPUB/DOCX/MP3 exports are unavailable.
+No `adb` device or emulator is available, so APK installation and on-device runtime behavior were not tested. The APK contains the client only and requires a reachable API/database backend. TXT export works; PDF/EPUB/DOCX/MP3 exports are unavailable.
 
 ## NOT IMPLEMENTED
 
-**OCR recognition is not implemented.** PDF pages without extractable text remain `ocr_required`; translation and approval are blocked, and a book is never marked fully translated while any such pages remain unresolved. Mixed text/image pages warn that image text may be missing.
+**OCR recognition is not implemented.** PDF pages without extractable text remain `ocr_required`; translation and approval are blocked, and a book is never marked fully translated while such pages remain unresolved. Mixed text/image pages warn that image text may be missing.
 
-The changes are staged locally for the existing public repository's `main` branch and have **not** been pushed; publication awaits the user's approval after review of the exact change summary and target.
+## Publication state
+
+The public repository target remains `main`, based on commit `75a64770c6c40ca414ca95e3d33fcae12252a16c`. The local changes are **not staged, committed, or pushed** and await approval of the exact change set and target. The existing `LICENSE` is unchanged.

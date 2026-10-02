@@ -1,5 +1,33 @@
 const STORAGE_KEY = 'myanmar-reader-api-origin';
 
+export function normalizeApiOrigin(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+
+  let parsed;
+  try { parsed = new URL(trimmed); }
+  catch { throw new Error('Enter a valid server origin beginning with https://, or use http://localhost for local development.'); }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('The server origin must use http:// or https://.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Do not include a username or password in the server URL.');
+  }
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash || /[?#]/.test(trimmed)) {
+    throw new Error('Enter the server origin only; do not include a path, query, or fragment.');
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const unwrappedHostname = hostname.replace(/^\[|\]$/g, '');
+  const isLoopback = hostname === 'localhost' || hostname.endsWith('.localhost') || unwrappedHostname === '::1' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  if (parsed.protocol === 'http:' && !isLoopback) {
+    throw new Error('Use HTTPS for non-local servers to protect sign-in details.');
+  }
+
+  return parsed.origin;
+}
+
 export function apiOrigin() {
   const saved = localStorage.getItem(STORAGE_KEY);
   const configured = import.meta.env.VITE_API_BASE_URL || '';
@@ -7,10 +35,34 @@ export function apiOrigin() {
 }
 
 export function setApiOrigin(value) {
-  const trimmed = String(value || '').trim().replace(/\/$/, '');
-  if (trimmed && !/^https?:\/\//i.test(trimmed)) throw new Error('Backend URL must begin with http:// or https://.');
-  if (trimmed) localStorage.setItem(STORAGE_KEY, trimmed);
+  const origin = normalizeApiOrigin(value);
+  if (origin) localStorage.setItem(STORAGE_KEY, origin);
   else localStorage.removeItem(STORAGE_KEY);
+  return origin;
+}
+
+export async function checkApiHealth(value = '') {
+  const origin = normalizeApiOrigin(value) || window.location.origin;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(`${origin}/api/health`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      credentials: 'omit',
+      cache: 'no-store',
+      signal: controller.signal
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(`The server returned HTTP ${response.status}.`);
+    if (result?.ok !== true) throw new Error('The server responded but did not confirm a healthy app API.');
+    return result;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error('The connection check timed out. Check the address and try again.');
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function apiUrl(path) {

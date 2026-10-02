@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Activity, AudioLines, Bell, BookOpen, BookOpenCheck, Bookmark, ChartNoAxesColumn, Check, ChevronDown, CircleHelp, FileUp, Heart, Home, Library, LogOut, Menu, Search, Settings, ShieldCheck, Sparkles, X } from 'lucide-react';
-import { api, apiOrigin, setApiOrigin } from './api.js';
+import { Activity, AudioLines, Bell, BookOpen, BookOpenCheck, Bookmark, ChartNoAxesColumn, Check, ChevronDown, CircleHelp, Eye, EyeOff, FileUp, Heart, Home, Library, LogOut, Menu, Search, Server, Settings, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { api, apiOrigin, checkApiHealth, setApiOrigin } from './api.js';
 import { Dashboard, LibraryPage, BookDetails, ReaderPage, ReviewPage, AudioPage, StatisticsPage, GlossaryPage, SettingsPage, EmptyState } from './pages.jsx';
 
 const menu = [
@@ -18,10 +18,14 @@ export function AuthScreen({ onLogin, error: initialError }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState(initialError || '');
   const [busy, setBusy] = useState(false);
   const [origin, setOrigin] = useState(apiOrigin());
-  const [saved, setSaved] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [connectionNotice, setConnectionNotice] = useState(null);
+  const [serverError, setServerError] = useState('');
   const submit = async event => {
     event.preventDefault(); setBusy(true); setError('');
     try {
@@ -30,20 +34,64 @@ export function AuthScreen({ onLogin, error: initialError }) {
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   };
+  const checkConnection = async () => {
+    setChecking(true); setConnectionNotice(null); setServerError('');
+    try {
+      await checkApiHealth(origin);
+      setConnectionNotice({ ok: true, text: 'The app API responded successfully.' });
+    } catch (e) {
+      const detail = ['Failed to fetch', 'Load failed'].includes(e.message) ? 'Check the address and network, then try again.' : e.message;
+      setConnectionNotice({ ok: false, text: `Could not confirm this server. ${detail}` });
+    } finally { setChecking(false); }
+  };
+  const saveServer = () => {
+    try {
+      const savedOrigin = setApiOrigin(origin);
+      setOrigin(savedOrigin);
+      setServerError('');
+      setConnectionNotice({ ok: true, text: 'Saved on this device. Reconnecting…' });
+      setReconnecting(true);
+      window.setTimeout(() => window.location.reload(), 350);
+    } catch (e) { setServerError(e.message); setConnectionNotice(null); }
+  };
   return <main className="auth-screen"><section className="card auth-card">
-    <Brand />
-    <h1>Your next book,<br/>in Myanmar.</h1>
-    <p>A private place to import, translate, review, and read your books.</p>
-    <div className="auth-tabs"><button className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Sign in</button><button className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Create account</button></div>
-    {error && <div className="notice error" role="alert">{error}</div>}
-    <form className="form-grid" onSubmit={submit}>
-      {mode === 'signup' && <label className="field"><span className="form-label">Name</span><input className="input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required minLength={2}/></label>}
-      <label className="field"><span className="form-label">Email</span><input className="input" type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} required/></label>
-      <label className="field"><span className="form-label">Password</span><input className="input" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'signup' ? 10 : 1}/>{mode === 'signup' && <span className="caption">Use at least 10 characters.</span>}</label>
-      <button className="button" disabled={busy}>{busy ? <span className="spinner"/> : mode === 'signup' ? 'Create your account' : 'Sign in'}</button>
-    </form>
-    <div className="divider"/><details><summary className="caption">Connect to another app server</summary><div className="form-grid" style={{marginTop:12}}><label className="field"><span className="form-label">Backend URL</span><input className="input" value={origin} onChange={e => setOrigin(e.target.value)} placeholder="https://your-reader.example" /></label><button className="button secondary small" onClick={e => { e.preventDefault(); try { setApiOrigin(origin); setSaved(true); setError(''); } catch (err) { setError(err.message); } }}>Save server URL</button>{saved && <span className="caption">Saved. Reloading your session…</span>}</div></details>
-    <p className="caption" style={{marginTop:18}}>Your books, notes, and reading activity are private to your account.</p>
+    <aside className="auth-intro">
+      <Brand />
+      <div className="auth-intro-copy">
+        <div className="auth-kicker"><ShieldCheck size={14}/>A private reading workspace</div>
+        <h1>Read with more<br/>understanding.</h1>
+        <p>Bring your books, translation review, and Myanmar reading together in one thoughtful space.</p>
+        <div className="auth-feature-list">
+          <div className="auth-feature"><BookOpen size={17}/><span><strong>Import your books</strong><small>PDF, EPUB, DOCX, and TXT</small></span></div>
+          <div className="auth-feature"><Sparkles size={17}/><span><strong>Review page by page</strong><small>Keep your reading in your hands</small></span></div>
+          <div className="auth-feature"><Settings size={17}/><span><strong>Make it yours</strong><small>Choose your font and reading theme</small></span></div>
+        </div>
+      </div>
+      <div className="auth-intro-footer"><ShieldCheck size={17}/><span><strong>Your library stays yours.</strong><small>Books and notes are private to your account.</small></span></div>
+    </aside>
+    <div className="auth-content">
+      <header className="auth-form-heading"><div className="eyebrow">{mode === 'login' ? 'Welcome back' : 'A quiet place for your books'}</div><h2>{mode === 'login' ? 'Sign in to your library' : 'Create your account'}</h2><p>{mode === 'login' ? 'Pick up where you left off.' : 'Set up a private library for your reading.'}</p></header>
+      <div className="auth-tabs" role="tablist" aria-label="Account access"><button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setError(''); }}>Sign in</button><button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError(''); }}>Create account</button></div>
+      {error && <div className="notice error" role="alert">{error}</div>}
+      <form className="form-grid auth-form" onSubmit={submit}>
+        {mode === 'signup' && <label className="field"><span className="form-label">Name</span><input className="input" autoComplete="name" value={name} onChange={e => setName(e.target.value)} required minLength={2}/></label>}
+        <label className="field"><span className="form-label">Email</span><input className="input" type="email" autoComplete="email" inputMode="email" value={email} onChange={e => setEmail(e.target.value)} required/></label>
+        <label className="field"><span className="form-label">Password</span><span className="auth-password-field"><input id="auth-password" className="input" type={passwordVisible ? 'text' : 'password'} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === 'signup' ? 10 : 1}/><button type="button" className="auth-password-toggle" aria-label={passwordVisible ? 'Hide password' : 'Show password'} aria-pressed={passwordVisible} onClick={() => setPasswordVisible(value => !value)}>{passwordVisible ? <EyeOff size={17}/> : <Eye size={17}/>}</button></span>{mode === 'signup' && <span className="caption">Use at least 10 characters.</span>}</label>
+        <button type="submit" className="button auth-submit" disabled={busy}>{busy ? <><span className="spinner"/>Please wait…</> : mode === 'signup' ? 'Create your account' : 'Sign in'}</button>
+      </form>
+      <details className="auth-server">
+        <summary><span className="auth-server-mark"><Server size={16}/></span><span className="auth-server-title"><strong>Server connection</strong><small>{origin.trim() ? 'A custom server is selected' : 'Using this app’s server'}</small></span><ChevronDown size={16}/></summary>
+        <div className="auth-server-content">
+          <p>On the web, leave this empty to use the current site. The Android app needs a reachable HTTPS server. Enter an origin only—never a path, username, or password.</p>
+          <label className="field"><span className="form-label">Backend origin</span><input className="input" type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck="false" value={origin} onChange={e => { setOrigin(e.target.value); setConnectionNotice(null); setServerError(''); }} placeholder="https://" aria-describedby="auth-server-help"/><span className="caption" id="auth-server-help">Leave blank to use this site’s API. Server addresses are stored on this device.</span></label>
+          <div className="auth-server-actions"><button type="button" className="button secondary small" onClick={checkConnection} disabled={checking}>{checking ? <><span className="spinner"/>Checking…</> : 'Check connection'}</button><button type="button" className="button small" onClick={saveServer} disabled={reconnecting}>{reconnecting ? 'Reconnecting…' : 'Save & reconnect'}</button></div>
+          {connectionNotice && <div className={`notice ${connectionNotice.ok ? 'info' : 'error'}`} role="status">{connectionNotice.text}</div>}
+          {serverError && <div className="notice error" role="alert">{serverError}</div>}
+          <p className="caption auth-server-trust">Sign-in details are sent to the selected server. Use only a server you trust.</p>
+        </div>
+      </details>
+      <div className="auth-security"><ShieldCheck size={15}/><span>Your books, notes, and reading activity are private to your account.</span></div>
+    </div>
   </section></main>;
 }
 
