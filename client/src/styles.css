@@ -140,3 +140,16 @@
   .auth-server-actions .button{min-width:122px}
   .settings-server-actions .button{flex:1}
 }
+
+
+.ai-provider-settings{min-width:0}
+.provider-current-status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}
+.provider-current-status .small-text{min-width:0;overflow-wrap:anywhere}
+.provider-security{display:flex;align-items:flex-start;gap:8px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper);font-size:12px;line-height:1.6;color:var(--muted);overflow-wrap:anywhere}
+.provider-security svg{flex:none;margin-top:2px;color:var(--green)}
+.provider-settings-actions{display:flex;flex-wrap:wrap;gap:8px}
+.provider-settings-actions .button{min-width:120px}
+@media(max-width:560px){
+  .provider-current-status{align-items:flex-start}
+  .provider-settings-actions .button{flex:1;min-width:0}
+}

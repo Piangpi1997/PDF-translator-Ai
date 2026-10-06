@@ -1,9 +1,10 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { db as defaultDb, nowIso } from './db.js';
 import { translateWithProvider } from './providers.js';
+import { getProviderSecret } from './providerSecrets.js';
 
 const PAGE_BATCH = Math.max(1, Math.min(8, Number(process.env.TRANSLATION_PAGES_PER_CHUNK) || 5));
-const validProvider = value => value === 'free_ai' || value === 'kimi_k3';
+const validProvider = value => ['free_ai', 'kimi_k3', 'custom_openai'].includes(value);
 const needsOcr = page => page.content_state === 'ocr_required' || !String(page.original_text || '').trim();
 
 export function emitNotification(db, ownerId, eventKey, kind, message, entityId = null) {
@@ -29,12 +30,12 @@ export function bookTranslationState(db, bookId, ownerId) {
 }
 
 export function createTranslationJob(db, { bookId, ownerId, provider, pageNumber = null, force = false }) {
-  if (!validProvider(provider)) { const error = new Error('Select Free AI or Kimi K3 as the translation provider.'); error.status = 400; throw error; }
+  if (!validProvider(provider)) { const error = new Error('Select a supported translation provider.'); error.status = 400; throw error; }
   const book = db.prepare('SELECT id,title FROM books WHERE id=? AND owner_id=?').get(bookId, ownerId);
   if (!book) { const error = new Error('Book not found.'); error.status = 404; throw error; }
   if (pageNumber == null) {
-    const active = db.prepare("SELECT id,provider,status FROM document_jobs WHERE book_id=? AND owner_id=? AND status IN ('queued','processing') ORDER BY created_at DESC LIMIT 1").get(bookId, ownerId);
-    if (active) return { id: active.id, provider: active.provider, status: active.status, reused: true };
+    const active = db.prepare("SELECT id,provider,provider_id,status FROM document_jobs WHERE book_id=? AND owner_id=? AND status IN ('queued','processing') ORDER BY created_at DESC LIMIT 1").get(bookId, ownerId);
+    if (active) return { id: active.id, provider: active.provider_id || active.provider, status: active.status, reused: true };
   }
   const id = randomUUID();
   const now = nowIso();
@@ -42,10 +43,11 @@ export function createTranslationJob(db, { bookId, ownerId, provider, pageNumber
     ? db.prepare('SELECT page_number,content_state,original_text,translation_text FROM pages WHERE book_id=? AND owner_id=? ORDER BY page_number').all(bookId, ownerId)
     : db.prepare('SELECT page_number,content_state,original_text,translation_text FROM pages WHERE book_id=? AND owner_id=? AND page_number=?').all(bookId, ownerId, Number(pageNumber));
   if (!pages.length) { const error = new Error('Page not found.'); error.status = 404; throw error; }
-  db.prepare(`INSERT INTO document_jobs(id,book_id,owner_id,provider,status,total_chunks,created_at,updated_at)
-    VALUES(?,?,?,?,'queued',0,?,?)`).run(id, bookId, ownerId, provider, now, now);
-  const insertChunk = db.prepare(`INSERT INTO chunk_jobs(id,document_job_id,book_id,owner_id,chunk_number,start_page,end_page,provider,status,force_regenerate,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const legacyProvider = provider === 'custom_openai' ? 'free_ai' : provider;
+  db.prepare(`INSERT INTO document_jobs(id,book_id,owner_id,provider,provider_id,status,total_chunks,created_at,updated_at)
+    VALUES(?,?,?,?,?,'queued',0,?,?)`).run(id, bookId, ownerId, legacyProvider, provider, now, now);
+  const insertChunk = db.prepare(`INSERT INTO chunk_jobs(id,document_job_id,book_id,owner_id,chunk_number,start_page,end_page,provider,provider_id,status,force_regenerate,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const grouped = pageNumber == null
     ? Array.from({ length: Math.ceil(pages.length / PAGE_BATCH) }, (_, index) => pages.slice(index * PAGE_BATCH, (index + 1) * PAGE_BATCH))
     : [pages];
@@ -55,14 +57,15 @@ export function createTranslationJob(db, { bookId, ownerId, provider, pageNumber
       const hasOcr = group.some(needsOcr);
       const allAlreadyDone = group.every(page => needsOcr(page) || Boolean(page.translation_text && !force));
       const status = actionable ? 'queued' : hasOcr ? 'ocr_required' : allAlreadyDone ? 'completed' : 'failed';
-      insertChunk.run(randomUUID(), id, bookId, ownerId, index + 1, group[0].page_number, group[group.length - 1].page_number, provider, status, force ? 1 : 0, now, now);
+      insertChunk.run(randomUUID(), id, bookId, ownerId, index + 1, group[0].page_number, group[group.length - 1].page_number, legacyProvider, provider, status, force ? 1 : 0, now, now);
     });
     const totalChunks = grouped.length;
     const completedChunks = db.prepare("SELECT COUNT(*) AS count FROM chunk_jobs WHERE document_job_id=? AND owner_id=? AND status='completed'").get(id, ownerId).count;
     db.prepare('UPDATE document_jobs SET total_chunks=?,completed_chunks=?,updated_at=? WHERE id=? AND owner_id=?').run(totalChunks, completedChunks, now, id, ownerId);
-    db.prepare('UPDATE books SET translation_provider=?,translation_status=?,finished_at=NULL WHERE id=? AND owner_id=?').run(provider, 'processing', bookId, ownerId);
+    db.prepare('UPDATE books SET translation_provider=?,translation_provider_id=?,translation_status=?,finished_at=NULL WHERE id=? AND owner_id=?').run(legacyProvider, provider, 'processing', bookId, ownerId);
   })();
-  emitNotification(db, ownerId, `job:${id}:started`, 'translation_started', `Translation started with ${provider === 'free_ai' ? 'Free AI' : 'Kimi K3'}.`, id);
+  const providerLabel = provider === 'free_ai' ? 'Free AI' : provider === 'kimi_k3' ? 'Kimi K3' : 'Custom OpenAI-compatible API';
+  emitNotification(db, ownerId, `job:${id}:started`, 'translation_started', `Translation started with ${providerLabel}.`, id);
   const ocrPages = pages.filter(needsOcr).length;
   if (ocrPages) emitNotification(db, ownerId, `job:${id}:ocr`, 'ocr_required', `${ocrPages} page(s) need OCR. No translation will be invented for unreadable pages.`, bookId);
   return { id, provider, status: 'queued', total_chunks: grouped.length, reused: false };
@@ -109,7 +112,9 @@ export async function runQueuedJobs(db = defaultDb, translate = translateWithPro
       db.prepare("UPDATE chunk_jobs SET status='processing',attempts=attempts+1,updated_at=? WHERE id=? AND owner_id=?").run(nowIso(), chunk.id, job.owner_id);
       try {
         const glossary = db.prepare('SELECT source_term,target_term,note FROM glossary_terms WHERE owner_id=?').all(job.owner_id);
-        const translations = await translate(job.provider, { pages: selected, glossary });
+        const provider = job.provider_id || job.provider;
+        const providerConfig = provider === 'free_ai' ? null : getProviderSecret(db, job.owner_id, provider);
+        const translations = await translate(provider, { pages: selected, glossary, ownerId: job.owner_id, providerConfig });
         if (!Array.isArray(translations) || translations.length !== selected.length || translations.some(value => typeof value !== 'string' || !value.trim())) throw new Error('Provider did not return complete translations.');
         const changed = [];
         db.transaction(() => {
@@ -148,9 +153,10 @@ export function retryJob(db, jobId, ownerId) {
   const result = db.prepare("UPDATE chunk_jobs SET status='queued',last_error=NULL,updated_at=? WHERE document_job_id=? AND owner_id=? AND status='failed'").run(nowIso(), jobId, ownerId);
   if (!result.changes) { const error = new Error('This job has no failed chunks to retry.'); error.status = 409; throw error; }
   db.prepare("UPDATE document_jobs SET status='queued',error_message=NULL,finished_at=NULL,updated_at=? WHERE id=? AND owner_id=?").run(nowIso(), jobId, ownerId);
-  db.prepare("UPDATE books SET translation_status='processing',translation_provider=? WHERE id=? AND owner_id=?").run(job.provider, job.book_id, ownerId);
+  const provider = job.provider_id || job.provider;
+  db.prepare("UPDATE books SET translation_status='processing',translation_provider=?,translation_provider_id=? WHERE id=? AND owner_id=?").run(provider === 'custom_openai' ? 'free_ai' : provider, provider, job.book_id, ownerId);
   emitNotification(db, ownerId, `job:${jobId}:retry:${nowIso()}`, 'retry', 'Translation retry queued; completed chunks are skipped.', jobId);
-  return { id: jobId, provider: job.provider, status: 'queued' };
+  return { id: jobId, provider, status: 'queued' };
 }
 
 export function resumeStaleJobs(db, staleAfterMs = 10 * 60 * 1000) {

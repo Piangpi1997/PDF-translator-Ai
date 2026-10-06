@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,green \"node --watch server/main.js\" \"vite --host 0.0.0.0\"",
     "build": "npm run check && vite build",
-    "check": "node --check server/main.js && node --check server/db.js && node --check server/security.js && node --check server/importers.js && node --check server/providers.js && node --check server/jobs.js && node --check server/routes.js",
+    "check": "node --check server/main.js && node --check server/db.js && node --check server/security.js && node --check server/importers.js && node --check server/onlinePdf.js && node --check server/providerSecrets.js && node --check server/providerHttp.js && node --check server/providers.js && node --check server/jobs.js && node --check server/routes.js",
     "test": "node --test",
     "start": "NODE_ENV=production node server/main.js",
     "android:init": "cap add android",

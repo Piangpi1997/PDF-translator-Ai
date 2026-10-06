@@ -96,7 +96,8 @@ function requestOnce(url, addresses, maxBytes, timeoutMs) {
       path: `${url.pathname}${url.search}`,
       method: 'GET',
       headers: { accept: 'application/pdf, application/octet-stream;q=0.9', 'user-agent': 'MyanmarEbookReader/1.0' },
-      lookup: (_hostname, _options, callback) => {
+      lookup: (_hostname, options, callback) => {
+        if (options?.all) return callback(null, addresses.map(item => ({ address: item.address, family: item.family })));
         const item = addresses[index++ % addresses.length];
         callback(null, item.address, item.family);
       },

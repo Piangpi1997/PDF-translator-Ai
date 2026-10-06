@@ -22,6 +22,18 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_provider_configs (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK(provider IN ('kimi_k3','custom_openai')),
+  base_url TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  api_key_ciphertext TEXT NOT NULL,
+  api_key_iv TEXT NOT NULL,
+  api_key_tag TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(owner_id, provider)
+);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -42,6 +54,7 @@ CREATE TABLE IF NOT EXISTS books (
   mime_type TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   translation_provider TEXT NOT NULL DEFAULT 'free_ai' CHECK(translation_provider IN ('free_ai','kimi_k3')),
+  translation_provider_id TEXT,
   translation_status TEXT NOT NULL DEFAULT 'not_started',
   total_pages INTEGER NOT NULL DEFAULT 0,
   is_favorite INTEGER NOT NULL DEFAULT 0 CHECK(is_favorite IN (0,1)),
@@ -86,6 +99,7 @@ CREATE TABLE IF NOT EXISTS document_jobs (
   book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
   owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   provider TEXT NOT NULL CHECK(provider IN ('free_ai','kimi_k3')),
+  provider_id TEXT,
   status TEXT NOT NULL DEFAULT 'queued',
   total_chunks INTEGER NOT NULL DEFAULT 0,
   completed_chunks INTEGER NOT NULL DEFAULT 0,
@@ -105,6 +119,7 @@ CREATE TABLE IF NOT EXISTS chunk_jobs (
   start_page INTEGER NOT NULL,
   end_page INTEGER NOT NULL,
   provider TEXT NOT NULL CHECK(provider IN ('free_ai','kimi_k3')),
+  provider_id TEXT,
   status TEXT NOT NULL DEFAULT 'queued',
   force_regenerate INTEGER NOT NULL DEFAULT 0 CHECK(force_regenerate IN (0,1)),
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -206,6 +221,16 @@ const chunkJobColumns = db.pragma('table_info(chunk_jobs)').map(column => column
 if (!chunkJobColumns.includes('force_regenerate')) {
   db.exec("ALTER TABLE chunk_jobs ADD COLUMN force_regenerate INTEGER NOT NULL DEFAULT 0 CHECK(force_regenerate IN (0,1))");
 }
+const ensureColumn = (table, name, definition) => {
+  const columns = db.pragma(`table_info(${table})`).map(column => column.name);
+  if (!columns.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+};
+ensureColumn('books', 'translation_provider_id', 'TEXT');
+ensureColumn('document_jobs', 'provider_id', 'TEXT');
+ensureColumn('chunk_jobs', 'provider_id', 'TEXT');
+db.exec("UPDATE books SET translation_provider_id=translation_provider WHERE translation_provider_id IS NULL");
+db.exec("UPDATE document_jobs SET provider_id=provider WHERE provider_id IS NULL");
+db.exec("UPDATE chunk_jobs SET provider_id=provider WHERE provider_id IS NULL");
 
 export const dataPath = dataDir;
 export const nowIso = () => new Date().toISOString();

@@ -13,7 +13,8 @@ Implemented workflows include:
 - Side-by-side original/Myanmar reader modes, page navigation, full-screen and keyboard controls, configurable Myanmar fonts/themes, book search, TOC, lazy PDF page-image previews, text previews for other formats, bookmarks, editable/searchable private notes, and colored highlights.
 - Resumable, idempotent translation jobs with provider persisted per book/job, bounded page chunks, retries, review/edit/approval, and owner-private notifications.
 - Owner-private glossary CRUD/search/JSON import/export, plus page-level audio records and playback routes when a speech provider is configured.
-- Secure server-side provider adapters for host-managed InvokeLLM, Kimi K3, and optional TTS; credentials are not placed in browser code.
+- Server-side provider adapters for host-managed InvokeLLM, per-user Kimi K3, and custom OpenAI-compatible APIs, plus optional TTS. User API keys are AES-256-GCM encrypted at rest and never returned to the browser.
+- Settings controls for provider/base URL/model, masked API-key status, Test Connection, Save, and Clear/Delete; provider choices persist on books, jobs, chunks, and retry.
 - A Capacitor Android wrapper that packages the web client.
 
 ## Run locally
@@ -46,7 +47,7 @@ The APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. It c
 ## Important limitations
 
 - OCR is **not implemented**. A PDF page with no extractable text remains explicitly `ocr_required`, cannot be translated or approved, and prevents the book from being reported fully translated. Image text on mixed text/image pages may also require OCR.
-- Translation is real only when a service is configured. Free AI requires a host-managed InvokeLLM-compatible `INVOKE_LLM_URL`; Kimi K3 requires a server-only `KIMI_API_KEY`. Without them the UI reports unavailable and jobs fail honestly rather than inventing translations.
+- Translation is real only when a service is configured. Free AI requires a host-managed InvokeLLM-compatible `INVOKE_LLM_URL`. Users can add Kimi K3 or a custom OpenAI-compatible API in Settings; saving user keys requires the server-only `PROVIDER_CREDENTIAL_ENCRYPTION_KEY` (32 random bytes encoded as base64 or 64 hex characters). If a service/key is absent, the UI reports unavailable and jobs fail honestly rather than inventing translations. No live external translation key is bundled with the project.
 - Audio generation requires a compatible server-side `TTS_API_URL`. The adapter does not claim Myanmar pronunciation or send an unsupported language code.
 - TXT export is available. PDF, EPUB, DOCX, and MP3 export are not implemented.
 - The Android package is a client wrapper that requires a backend; it is not a standalone offline app. A device/emulator runtime install test is separate from a successful APK build.

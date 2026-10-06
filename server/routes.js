@@ -7,11 +7,12 @@ import { db as defaultDb, dataPath, nowIso } from './db.js';
 import { hashPassword, verifyPassword, createSession, clearSessionCookie, deleteCurrentSession, requireAuth } from './security.js';
 import { parseDocument, parsePdf } from './importers.js';
 import { fetchPublicPdf, validateOnlinePdfUrl } from './onlinePdf.js';
-import { generateSpeech, providerAvailability } from './providers.js';
+import { generateSpeech, providerAvailability, testProviderConnection } from './providers.js';
 import { bookTranslationState, createTranslationJob, emitNotification, retryJob, runQueuedJobs, translationFingerprint } from './jobs.js';
+import { credentialEncryptionReady, getProviderSecret, providerSettingsForUser, saveProviderSecret, USER_PROVIDERS, PROVIDER_DEFAULTS } from './providerSecrets.js';
 
 const supportedCategories = ['Fiction','Non-Fiction','Religion','Education','Children','Other'];
-const supportedProviders = ['free_ai','kimi_k3'];
+const supportedProviders = ['free_ai','kimi_k3','custom_openai'];
 const validId = value => /^[0-9a-f-]{36}$/i.test(String(value || ''));
 const safeError = error => String(error?.message || 'Request failed.').replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]').replace(/(api[_-]?key|authorization)(["'\s:=]+)[^\s,;"']+/gi, '$1$2[redacted]').slice(0, 300);
 const contentHash = buffer => createHash('sha256').update(buffer).digest('hex');
@@ -26,9 +27,9 @@ function requirePage(db, ownerId, bookId, pageNumber) {
 function publicBook(db, row) {
   const state = bookTranslationState(db, row.id, row.owner_id);
   const progress = db.prepare('SELECT page_number,updated_at FROM reading_progress WHERE book_id=? AND owner_id=?').get(row.id, row.owner_id);
-  const latestJob = db.prepare('SELECT id,status,provider,total_chunks,completed_chunks,failed_chunks,updated_at FROM document_jobs WHERE book_id=? AND owner_id=? ORDER BY created_at DESC LIMIT 1').get(row.id, row.owner_id);
+  const latestJob = db.prepare('SELECT id,status,COALESCE(provider_id,provider) AS provider,total_chunks,completed_chunks,failed_chunks,updated_at FROM document_jobs WHERE book_id=? AND owner_id=? ORDER BY created_at DESC LIMIT 1').get(row.id, row.owner_id);
   const audioCount = db.prepare("SELECT COUNT(*) AS count FROM audio_files WHERE book_id=? AND owner_id=? AND status IN ('ready','outdated','generating')").get(row.id, row.owner_id).count;
-  return { id: row.id, title: row.title, author: row.author, category: row.category, source_type: row.source_type, source_url: row.source_url, file_name: row.file_name, mime_type: row.mime_type, translation_provider: row.translation_provider, translation_status: state.status, total_pages: row.total_pages, is_favorite: Boolean(row.is_favorite), added_at: row.added_at, last_opened_at: row.last_opened_at || progress?.updated_at || null, finished_at: row.finished_at, translation: state, reading_progress: progress?.page_number || 0, latest_job: latestJob || null, has_audio: audioCount > 0 };
+  return { id: row.id, title: row.title, author: row.author, category: row.category, source_type: row.source_type, source_url: row.source_url, file_name: row.file_name, mime_type: row.mime_type, translation_provider: row.translation_provider_id || row.translation_provider, translation_status: state.status, total_pages: row.total_pages, is_favorite: Boolean(row.is_favorite), added_at: row.added_at, last_opened_at: row.last_opened_at || progress?.updated_at || null, finished_at: row.finished_at, translation: state, reading_progress: progress?.page_number || 0, latest_job: latestJob || null, has_audio: audioCount > 0 };
 }
 
 function insertParsedBook(db, { ownerId, parsed, title, author, fileName, buffer, sourceType = 'upload', sourceUrl = null, mimeType, provider = 'free_ai' }) {
@@ -41,8 +42,8 @@ function insertParsedBook(db, { ownerId, parsed, title, author, fileName, buffer
   const now = nowIso();
   try {
     db.transaction(() => {
-      db.prepare(`INSERT INTO books(id,owner_id,created_by_id,title,author,category,source_type,source_url,file_name,file_path,mime_type,content_hash,translation_provider,translation_status,total_pages,added_at)
-        VALUES(?,?,?,?,?,'Other',?,?,?,?,?,?,?,'not_started',?,?)`).run(id, ownerId, ownerId, String(title || parsed.title || fileName.replace(/\.[^.]+$/, '')).slice(0, 250), String(author || parsed.author || '').slice(0, 250), sourceType, sourceUrl, fileName.slice(0, 250), filePath, mimeType || parsed.mime_type, hash, provider, parsed.pages.length, now);
+      db.prepare(`INSERT INTO books(id,owner_id,created_by_id,title,author,category,source_type,source_url,file_name,file_path,mime_type,content_hash,translation_provider,translation_provider_id,translation_status,total_pages,added_at)
+        VALUES(?,?,?,?,?,'Other',?,?,?,?,?,?,?,?,'not_started',?,?)`).run(id, ownerId, ownerId, String(title || parsed.title || fileName.replace(/\.[^.]+$/, '')).slice(0, 250), String(author || parsed.author || '').slice(0, 250), sourceType, sourceUrl, fileName.slice(0, 250), filePath, mimeType || parsed.mime_type, hash, provider === 'custom_openai' ? 'free_ai' : provider, provider, parsed.pages.length, now);
       const insertPage = db.prepare(`INSERT INTO pages(id,book_id,owner_id,page_number,original_text,content_state,structure_json,translation_status,updated_at)
         VALUES(?,?,?,?,?,?,?,'not_started',?)`);
       const insertElement = db.prepare(`INSERT INTO elements(id,page_id,book_id,owner_id,element_order,kind,original_text,heading_level,formatting_json)
@@ -101,7 +102,45 @@ export function createApiRouter({ db = defaultDb, downloadOnlinePdf = fetchPubli
 
   router.use(requireAuth);
 
-  router.get('/config/providers', (_req, res) => res.json(providerAvailability()));
+  const providerSettings = ownerId => ({
+    ...providerSettingsForUser(db, ownerId),
+    audio: providerAvailability().audio,
+    credential_encryption_ready: credentialEncryptionReady()
+  });
+  router.get('/config/providers', (req, res) => res.json(providerSettings(req.user.id)));
+  router.get('/settings/ai-providers', (req, res) => res.json({ providers: providerSettingsForUser(db, req.user.id), credential_encryption_ready: credentialEncryptionReady() }));
+  router.put('/settings/ai-providers/:provider', (req, res) => {
+    try {
+      const saved = saveProviderSecret(db, {
+        ownerId: req.user.id,
+        provider: req.params.provider,
+        baseUrl: req.body?.base_url,
+        model: req.body?.model_name,
+        apiKey: req.body?.api_key
+      });
+      res.json({ provider: saved, providers: providerSettings(req.user.id) });
+    } catch (error) { res.status(error.status || 400).json({ error: safeError(error), code: error.code }); }
+  });
+  router.delete('/settings/ai-providers/:provider', (req, res) => {
+    if (!USER_PROVIDERS.includes(req.params.provider)) return res.status(400).json({ error: 'Choose Kimi K3 or Custom OpenAI-compatible.' });
+    db.prepare('DELETE FROM ai_provider_configs WHERE owner_id=? AND provider=?').run(req.user.id, req.params.provider);
+    res.status(204).end();
+  });
+  router.post('/settings/ai-providers/:provider/test', async (req, res) => {
+    const provider = req.params.provider;
+    try {
+      const saved = provider === 'free_ai' ? null : getProviderSecret(db, req.user.id, provider);
+      const defaults = PROVIDER_DEFAULTS[provider] || {};
+      const apiKey = String(req.body?.api_key || '').trim() || saved?.apiKey || '';
+      const config = provider === 'free_ai' ? null : {
+        baseUrl: String(req.body?.base_url || '').trim() || saved?.baseUrl || defaults.baseUrl,
+        model: String(req.body?.model_name || '').trim() || saved?.model || defaults.model,
+        apiKey
+      };
+      const result = await testProviderConnection(provider, config);
+      res.json(result);
+    } catch (error) { res.status(error.status || 502).json({ error: safeError(error), code: error.code || 'PROVIDER_ERROR' }); }
+  });
 
   router.get('/books', (req, res) => {
     const ownerId = req.user.id;
@@ -280,7 +319,7 @@ export function createApiRouter({ db = defaultDb, downloadOnlinePdf = fetchPubli
 
   router.post('/books/:bookId/translate', (req, res) => {
     const provider = req.body?.provider;
-    if (!supportedProviders.includes(provider)) return res.status(400).json({ error: 'Select Free AI or Kimi K3 before translating.' });
+    if (!supportedProviders.includes(provider)) return res.status(400).json({ error: 'Select a supported translation provider before translating.' });
     try {
       const job = createTranslationJob(db, { bookId: req.params.bookId, ownerId: req.user.id, provider });
       queueMicrotask(() => runQueuedJobs(db).catch(() => {}));
@@ -290,7 +329,7 @@ export function createApiRouter({ db = defaultDb, downloadOnlinePdf = fetchPubli
 
   router.post('/books/:bookId/pages/:pageNumber/regenerate', (req, res) => {
     const provider = req.body?.provider;
-    if (!supportedProviders.includes(provider)) return res.status(400).json({ error: 'Select Free AI or Kimi K3 for regeneration.' });
+    if (!supportedProviders.includes(provider)) return res.status(400).json({ error: 'Select a supported translation provider for regeneration.' });
     try {
       const job = createTranslationJob(db, { bookId: req.params.bookId, ownerId: req.user.id, provider, pageNumber: req.params.pageNumber, force: true });
       queueMicrotask(() => runQueuedJobs(db).catch(() => {}));
@@ -299,9 +338,10 @@ export function createApiRouter({ db = defaultDb, downloadOnlinePdf = fetchPubli
   });
 
   router.get('/jobs/:jobId', (req, res) => {
-    const job = db.prepare('SELECT * FROM document_jobs WHERE id=? AND owner_id=?').get(req.params.jobId, req.user.id);
-    if (!job) return res.status(404).json({ error: 'Translation job not found.' });
-    const chunks = db.prepare('SELECT chunk_number,start_page,end_page,provider,status,attempts,last_error FROM chunk_jobs WHERE document_job_id=? AND owner_id=? ORDER BY chunk_number').all(job.id, req.user.id);
+    const storedJob = db.prepare('SELECT * FROM document_jobs WHERE id=? AND owner_id=?').get(req.params.jobId, req.user.id);
+    if (!storedJob) return res.status(404).json({ error: 'Translation job not found.' });
+    const job = { ...storedJob, provider: storedJob.provider_id || storedJob.provider };
+    const chunks = db.prepare('SELECT chunk_number,start_page,end_page,COALESCE(provider_id,provider) AS provider,status,attempts,last_error FROM chunk_jobs WHERE document_job_id=? AND owner_id=? ORDER BY chunk_number').all(job.id, req.user.id);
     res.json({ job, chunks, book_translation: bookTranslationState(db, job.book_id, req.user.id) });
   });
 
